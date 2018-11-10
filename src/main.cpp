@@ -9,15 +9,18 @@
 #include <GSLAM/core/Vocabulary.h>
 
 #include "FeatureDetector.h"
+#include "MemoryMetric.h"
 
 void testGSLAM(const std::vector<cv::Mat>& featuresCV)
 {
+    std::cout<<"----------------GSLAM------------------------\n";
     std::vector<GSLAM::GImage> features;
     features.reserve(featuresCV.size());
     for(auto it:featuresCV) features.push_back(it);
 
     LOG(INFO)<<"GSLAM: Creating vocabulary from image features.\n";
     SPtr<GSLAM::Vocabulary> vocabulary;
+
     {
         GSLAM::ScopedTimer tm("GSLAM::train");
         vocabulary=GSLAM::Vocabulary::create(features,svar.GetInt("k"),svar.GetInt("level"));
@@ -35,7 +38,20 @@ void testGSLAM(const std::vector<cv::Mat>& featuresCV)
     if(vocabularyfile2save.size())
     {
         GSLAM::ScopedTimer tm("GSLAM::load");
-        GSLAM::Vocabulary voc(vocabularyfile2save);
+        auto before=GSLAM::MemoryMetric::instanceCPU().usage();
+        auto count =GSLAM::MemoryMetric::instanceCPU().count();
+        {
+            GSLAM::Vocabulary voc(vocabularyfile2save);
+            LOG(INFO)<<"GSLAM used memory "<<GSLAM::MemoryMetric::instanceCPU().usage()-before
+                    <<" bytes with "<<GSLAM::MemoryMetric::instanceCPU().count()-count<<" picise.";
+            LOG(INFO)<<"Des:"<<voc.m_nodeDescriptors.total()<<"SizeofMat:"<<sizeof(cv::Mat)
+                    <<"GImage:"<<sizeof(GSLAM::GImage)
+                    <<"Node:"<<voc.m_nodes.capacity()<<"*"<<sizeof(GSLAM::Vocabulary::Node)
+                   <<"Words:"<<voc.m_words.capacity()*sizeof(void*);
+        }
+
+        LOG(INFO)<<"Memory leak:"<<GSLAM::MemoryMetric::instanceCPU().usage()-before<<" bytes with "
+                <<GSLAM::MemoryMetric::instanceCPU().count()-count<<" picise.";
     }
 
     GSLAM::BowVector     v;
@@ -47,10 +63,14 @@ void testGSLAM(const std::vector<cv::Mat>& featuresCV)
         vocabulary->transform(it,v,fv,levels_up);
     }
 
-    for(auto& it:features)
-        for(int i=0;i<it.rows;i++){
 
-        }
+    {
+        for(auto& it:features)
+            for(int i=0;i<it.rows;i++){
+                GSLAM::ScopedTimer tm("GSLAM::transDes");
+                vocabulary->transform(it.row(i));
+            }
+    }
 }
 
 std::vector<cv::Mat> toVec(const cv::Mat& mat){
@@ -63,13 +83,14 @@ std::vector<cv::Mat> toVec(const cv::Mat& mat){
 
 void testDBoW2(const std::vector<cv::Mat>& features)
 {
-
+    std::cout<<"----------------DBoW2------------------------\n";
 }
 
 void testDBoW3(const std::vector<cv::Mat>& features)
 {
+    std::cout<<"----------------DBoW3------------------------\n";
     DBoW3::Vocabulary voc(svar.GetInt("k"),svar.GetInt("level"));
-    LOG(INFO)<<"DBoW3: Creating vocabulary from image features.\n";
+    LOG(INFO)<<"DBoW3: Creating vocabulary from image features.";
     {
         GSLAM::ScopedTimer tm("DBoW3::train");
         voc.create(features);
@@ -96,12 +117,21 @@ void testDBoW3(const std::vector<cv::Mat>& features)
     LOG(INFO)<<"DBoW3: Saving vocabulary "<<voc;
     {
         GSLAM::ScopedTimer tm("DBoW3::save");
-        voc.save("vocabulary.dbow");
+        voc.save("vocabulary.dbow",false);
     }
 
     {
         GSLAM::ScopedTimer tm("DBoW3::load");
-        voc.load("vocabulary.dbow");
+        auto before=GSLAM::MemoryMetric::instanceCPU().usage();
+        auto count =GSLAM::MemoryMetric::instanceCPU().count();
+        {
+            SPtr<DBoW3::Vocabulary> voc(new DBoW3::Vocabulary(svar.GetInt("k"),svar.GetInt("level")));
+            voc->load("vocabulary.dbow");
+            LOG(INFO)<<"DBoW3 used memory "<<GSLAM::MemoryMetric::instanceCPU().usage()-before
+                    <<" bytes with "<<GSLAM::MemoryMetric::instanceCPU().count()-count<<" picise.";
+        }
+        LOG(INFO)<<"Memory leak:"<<GSLAM::MemoryMetric::instanceCPU().usage()-before<<" bytes with "
+                <<GSLAM::MemoryMetric::instanceCPU().count()-count<<" picise.";
     }
 
 }
@@ -110,27 +140,25 @@ void testFBoW(const std::vector<cv::Mat>& features)
 {
 }
 
-void startMemoryService()
-{
-
-}
-
 int main(int argc,char** argv){
     svar.Arg<int>("k",10,"How many branches each node grow.");
     svar.Arg<int>("level",3,"How many levels should the vocabulary contains.");
     svar.Arg<int>("weight",3,"How many levels should the vocabulary contains.");
     svar.Arg<int>("score",3,"How many levels should the vocabulary contains.");
     svar.Arg<std::string>("images","","The file path listed image paths.");
-    svar.Arg<bool>("mem",false,"Should report memory usage or not.");
+    svar.Arg<bool>("mem",true,"Should report memory usage or not.");
     svar.Arg<std::string>("feature","ORB","Feature name to test, support ORB or Sift.");
+
+    if(svar.Get<bool>("mem"))
+        GSLAM::MemoryMetric::instanceCPU().enable();
 
     auto unparsed=svar.ParseMain(argc,argv);
 
     std::string& image_lists=svar.GetString("images");
-    if((unparsed.size()&&!svar.exist("help"))||image_lists.empty())
+    if(unparsed.size()||svar.GetInt("help")||image_lists.empty())
     {
-        svar.Get<int>("help")=1;
-        std::cout<<svar.help();
+        std::cout<<svar.help()<<std::endl;
+        return 0;
     }
 
     // extract features

@@ -23,8 +23,8 @@
 
 namespace GSLAM {
 
-typedef size_t                 NodeId;
-typedef size_t                 WordId;
+typedef uint32_t               NodeId;
+typedef uint32_t               WordId;
 typedef float                  WordValue;
 typedef std::map<WordId,float> BowVector;
 typedef std::map<WordId,std::vector<unsigned int> > FeatureVector;
@@ -426,12 +426,15 @@ public:
       /// Parent node (undefined in case of root)
       NodeId parent;
 
-      /// Children
-      int          childNum;
-      NodeId       child[GSLAM_VOCABULARY_KMAX];
-
       /// Word id if the node is a word
       WordId word_id;
+      /// Children
+      int          childNum;
+#if  GSLAM_VOCABULARY_KMAX<=0
+      std::vector<NodeId> child;
+#else
+      NodeId       child[GSLAM_VOCABULARY_KMAX];
+#endif
 
       TinyMat descriptor;
 
@@ -452,12 +455,15 @@ public:
        */
       inline bool isLeaf() const { return childNum==0; }
 
-      bool addChild(NodeId _id)
+      void addChild(NodeId _id)
       {
-          if(childNum>9) return false;
+#if  GSLAM_VOCABULARY_KMAX<=0
+          child.push_back(_id);
+          childNum++;
+#else
           child[childNum]=_id;
           childNum++;
-          return true;
+#endif
       }
   };
 public:
