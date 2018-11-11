@@ -1,0 +1,9 @@
+[submodule "DBoW2"]
+	path = DBoW2
+	url = https://github.com/dorian3d/DBoW2
+[submodule "DBow3"]
+	path = DBow3
+	url = https://github.com/rmsalinas/DBow3
+[submodule "fbow"]
+	path = fbow
+	url = https://github.com/rmsalinas/fbow

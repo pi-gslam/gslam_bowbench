@@ -1,18 +1,6 @@
 #include <GSLAM/core/SharedLibrary.h>
 #include <unordered_map>
 
-#ifdef ANDROID
-extern "C" {
-void *malloc(size_t size) ;
-void free(void* ptr) ;
-}
-#else
-extern "C" {
-void *malloc(size_t size) throw();
-void free(void* ptr) throw();
-}
-#endif
-
 namespace GSLAM{
 
 class MemoryMetric{
@@ -64,7 +52,7 @@ public:
     operator bool(){return isEnabled();}
 
 private:
-    std::map<void*,size_t>  _allocated_sizes;
+    std::unordered_map<void*,size_t>  _allocated_sizes;
     std::mutex _mutex;
     size_t     _usage;
     bool       _enabled,_shouldIgnore;
