@@ -258,14 +258,14 @@ void testFBoW(const std::vector<cv::Mat>& features)
     {
         GSLAM::ScopedTimer tm("FBoW::train");
         fbow::VocabularyCreator creator;
-        creator.create(voc,features,"ORB",fbow::VocabularyCreator::Params(svar.GetInt("k")+1,svar.GetInt("level")));
+        creator.create(voc,features,"ORB",fbow::VocabularyCreator::Params(svar.GetInt("k"),svar.GetInt("level")));
     }
     LOG(INFO)<<"Created "<<voc.size();
 
 
     fbow::fBow     v;
     fbow::fBow2    fv;
-    int level=svar.GetInt("k")-svar.GetInt("levels_up")+1;
+    int level=svar.GetInt("k")-svar.GetInt("levels_up");
     for(auto& it:features)
     {
         GSLAM::ScopedTimer tm("FBoW::transImage");
