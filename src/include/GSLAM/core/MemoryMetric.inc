@@ -1,5 +1,6 @@
-
 #include "MemoryMetric.h"
+
+#include <GSLAM/core/SharedLibrary.h>
 
 #include <cstdio>
 #include <cstdlib>

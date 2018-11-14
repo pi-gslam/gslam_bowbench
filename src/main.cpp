@@ -3,9 +3,6 @@
 #include <GSLAM/core/Glog.h>
 #include <GSLAM/core/MemoryMetric.inc> // This file should always only included by the main.cpp
 
-#include <opencv2/highgui/highgui.hpp>
-#include "FeatureDetector.h"
-
 #include "../DBoW2/DBoW2.h"
 #include "DBoW2/FSift.h"
 // These undefs are required since DBoW2 and DBoW2 headers use the same names
@@ -17,6 +14,10 @@
 #include "../DBow3/src/DBoW3.h"
 #include "../fbow/src/vocabulary_creator.h"
 #include <GSLAM/core/Vocabulary.h>
+
+#include <opencv2/highgui/highgui.hpp>
+#include "FeatureDetector.h"
+
 
 void testGSLAM(const std::vector<cv::Mat>& featuresCV)
 {
@@ -258,7 +259,9 @@ void testFBoW(const std::vector<cv::Mat>& features)
     {
         GSLAM::ScopedTimer tm("FBoW::train");
         fbow::VocabularyCreator creator;
-        creator.create(voc,features,"ORB",fbow::VocabularyCreator::Params(svar.GetInt("k"),svar.GetInt("level")));
+        creator.create(voc,features,"ORB",fbow::VocabularyCreator::Params(svar.GetInt("k"),
+                                                                          svar.GetInt("level"),
+                                                                          svar.GetInt("threads")));
     }
     LOG(INFO)<<"Created "<<voc.size();
 

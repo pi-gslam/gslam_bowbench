@@ -16,10 +16,13 @@
 #include <fstream>
 #include <bitset>
 
+#define GSLAM_VOCABULARY_KMAX 10
+
 #include "GSLAM/core/GImage.h"
 #include "GSLAM/core/SPtr.h"
+#include "GSLAM/core/Mutex.h"
+#include "GSLAM/core/Timer.h"
 
-#define GSLAM_VOCABULARY_KMAX 10
 
 namespace GSLAM {
 
@@ -107,17 +110,21 @@ public:
     bool load(std::istream& ifs);
 
     /**
-     * Returns the number of words in the vocabulary
-     * @return number of words
+     * Returns the number of nodes in the vocabulary
+     * @return number of nodes
      */
-    virtual inline unsigned int size() const{  return (unsigned int)m_words.size();}
+    virtual inline unsigned int size() const{
+        unsigned int count=0;
+        for(auto& n:m_nodes) if(!n.childNum) count++;
+        return count;
+    }
 
 
     /**
      * Returns whether the vocabulary is empty (i.e. it has not been trained)
      * @return true iff the vocabulary is empty
      */
-    virtual inline bool empty() const{ return m_words.empty();}
+    virtual inline bool empty() const{ return m_nodes.empty();}
 
     /** Clears the vocabulary object
      */
@@ -258,16 +265,12 @@ public:
     /** Returns the size of the descriptor employed. If the Vocabulary is empty, returns -1
      */
     int getDescritorSize()const{
-        if(m_nodeDescriptors.cols) return m_nodeDescriptors.cols;
-        else if(m_words.size()) return m_words[0]->descriptor.cols;
-        else return 0;
+        return m_nodeDescriptors.cols;
     }
     /** Returns the type of the descriptor employed normally(8U_C1, 32F_C1)
      */
     int getDescritorType()const{
-        if(!m_nodeDescriptors.empty()) return m_nodeDescriptors.type();
-        else if(m_words.size()) return m_words[0]->descriptor.type();
-        else return GImageType<>::Type;
+        return m_nodeDescriptors.type();
     }
 
     /**
@@ -284,7 +287,7 @@ public:
      * @param b
      * @return distance
      */
-     static float distance(const TinyMat &a, const TinyMat &b);
+     float distance(const TinyMat &a, const TinyMat &b)const;
 
 
   /**
@@ -395,59 +398,37 @@ public:
   void HKmeansStep(NodeId parent_id, const std::vector<TinyMat> &descriptors,
     int current_level);
 
-  void unifyDescriptors()
-  {
-      if(!m_nodeDescriptors.empty()) return ;
-      if(!m_nodes.size()) return;
-      int featureBytes=0;
-      for(int i=0;i<m_nodes.size();i++)
-      {
-          Node& node=m_nodes[i];
-          if(node.descriptor.empty()) continue;
-          if(m_nodeDescriptors.empty())
-          {
-              m_nodeDescriptors=TinyMat(m_nodes.size(),node.descriptor.cols,
-                                        node.descriptor.type());
-              featureBytes=m_nodeDescriptors.elemSize()*m_nodeDescriptors.cols;
-          }
-          uchar* dest=m_nodeDescriptors.data+featureBytes*i;
-          memcpy(dest,node.descriptor.data,featureBytes);
-          node.descriptor=TinyMat(1,node.descriptor.cols,node.descriptor.type(),dest);
-      }
-  }
+//  void unifyDescriptors()
+//  {
+//      if(!m_nodeDescriptors.empty()) return ;
+//      if(!m_nodes.size()) return;
+//      int featureBytes=0;
+//      for(int i=0;i<m_nodes.size();i++)
+//      {
+//          Node& node=m_nodes[i];
+//          if(node.descriptor.empty()) continue;
+//          if(m_nodeDescriptors.empty())
+//          {
+//              m_nodeDescriptors=TinyMat(m_nodes.size(),node.descriptor.cols,
+//                                        node.descriptor.type());
+//              featureBytes=m_nodeDescriptors.elemSize()*m_nodeDescriptors.cols;
+//          }
+//          uchar* dest=m_nodeDescriptors.data+featureBytes*i;
+//          memcpy(dest,node.descriptor.data,featureBytes);
+//          node.descriptor=TinyMat(1,node.descriptor.cols,node.descriptor.type(),dest);
+//      }
+//  }
 
   /// Tree node
   struct Node
   {
-      /// Node id
-      NodeId id;
-      /// Weight if the node is a word
-      WordValue weight;
-      /// Parent node (undefined in case of root)
-      NodeId parent;
-
-      /// Word id if the node is a word
-      WordId word_id;
-      /// Children
-      int          childNum;
-#if  GSLAM_VOCABULARY_KMAX<=0
-      std::vector<NodeId> child;
-#else
-      NodeId       child[GSLAM_VOCABULARY_KMAX];
-#endif
-
-      TinyMat descriptor;
+      uint32_t     childNum;
+      WordValue    weight;
 
       /**
        * Empty constructor
        */
-      Node(): id(0), weight(0), parent(0), word_id(0),childNum(0){}
-
-      /**
-       * Constructor
-       * @param _id node id
-       */
-      Node(NodeId _id): id(_id), weight(0), parent(0), word_id(0),childNum(0){}
+      Node(): childNum(0), weight(0){}
 
       /**
        * Returns whether the node is a leaf node
@@ -457,14 +438,112 @@ public:
 
       void addChild(NodeId _id)
       {
-#if  GSLAM_VOCABULARY_KMAX<=0
-          child.push_back(_id);
           childNum++;
-#else
-          child[childNum]=_id;
-          childNum++;
-#endif
       }
+  };
+
+
+  struct DistanceFactory
+  {
+      typedef std::function<float(const uchar*,const uchar*)> DistanceFunc;
+
+      static float hamming32(const uchar* a,const uchar* b)
+      {
+          const uint64_t *pa = (uint64_t*)a;
+          const uint64_t *pb = (uint64_t*)b;
+          return std::bitset<64>(pa[0]^pb[0]).count()+std::bitset<64>(pa[1]^pb[1]).count()
+                  +std::bitset<64>(pa[2]^pb[2]).count()+std::bitset<64>(pa[3]^pb[3]).count();
+      }
+
+      static float hamming64(const uchar* a,const uchar* b){
+          const uint64_t *pa = (uint64_t*)a;
+          const uint64_t *pb = (uint64_t*)b;
+          return std::bitset<64>(pa[0]^pb[0]).count()+std::bitset<64>(pa[1]^pb[1]).count()
+                  +std::bitset<64>(pa[2]^pb[2]).count()+std::bitset<64>(pa[3]^pb[3]).count()
+                  +std::bitset<64>(pa[4]^pb[4]).count()+std::bitset<64>(pa[5]^pb[5]).count()
+                  +std::bitset<64>(pa[6]^pb[6]).count()+std::bitset<64>(pa[7]^pb[7]).count();
+      }
+
+      static float hamming8x(const uchar* a,const uchar* b,int bytes)
+      {
+          const uint64_t *pa = (uint64_t*)a;
+          const uint64_t *pb = (uint64_t*)b;
+
+          uint64_t ret = 0;
+          for(size_t i = 0; i < bytes / sizeof(uint64_t); ++i, ++pa, ++pb)
+          {
+              ret+=std::bitset<64>(*pa ^ *pb).count();
+          }
+          return ret;
+      }
+
+#if defined(__AVX2__)
+      static float l2avx(const uchar* a,const uchar* b,int floats){
+          int _nwords=floats/8;
+          __m256 sum=_mm256_setzero_ps(), sub_mult;
+          __m256* aptr=(__m256*)a;
+          __m256* bptr=(__m256*)b;
+         for(int i=0;i<_nwords;i++){
+             sub_mult=_mm256_sub_ps(aptr[i],bptr[i]);
+             sub_mult=_mm256_mul_ps(sub_mult,sub_mult);
+             sum=_mm256_add_ps(sum,sub_mult);
+         }
+         sum=_mm256_hadd_ps(sum,sum);
+         sum=_mm256_hadd_ps(sum,sum);
+         float *sum_ptr=(float*)&sum;
+         return  sum_ptr[0]+sum_ptr[4];
+      }
+#endif
+
+#if defined(__SSE2__)&&defined(__SSE__)
+      static float l2sse(const uchar* a,const uchar* b,int floats){
+          int _nwords=floats/4;
+          __m128 sum=_mm_setzero_ps(), sub_mult;
+          float* sum_ptr=(float*)&sum;
+         //substract, multiply and accumulate
+         __m128* aptr=(__m128*)a;
+         __m128* bptr=(__m128*)b;
+         for(int i=0;i<_nwords;i++){
+             sub_mult=_mm_sub_ps(aptr[i],bptr[i]);
+             sub_mult=_mm_mul_ps(sub_mult,sub_mult);
+             sum=_mm_add_ps(sum,sub_mult);
+         }
+         return sum_ptr[0]+sum_ptr[1]+sum_ptr[2]+sum_ptr[3] ;
+      }
+#endif
+
+      static float l2generic(const uchar* a,const uchar* b,int floats){
+          float sqd = 0.,tmp;
+          const float *a_ptr=(float*)a;
+          const float *b_ptr=(float*)b;
+          for(int i = 0; i < floats; i ++)
+          {
+              tmp = (a_ptr[i  ] - b_ptr[i  ]);
+              sqd += tmp*tmp;
+          }
+          return sqd;
+      }
+
+      static DistanceFunc create(const TinyMat& des){
+          //binary descriptor
+          if (des.type()==GImageType<uchar>::Type){
+               if(des.cols==32) return std::bind(&DistanceFactory::hamming32,std::placeholders::_1,std::placeholders::_2);
+               else if(des.cols==64) return std::bind(&DistanceFactory::hamming64,std::placeholders::_1,std::placeholders::_2);
+               else if(des.cols%8==0) return std::bind(&DistanceFactory::hamming8x,std::placeholders::_1,std::placeholders::_2,des.cols);
+               else return nullptr;
+          }
+          else if(des.type()==GImageType<float>::Type){
+#if defined(__AVX2__)
+               if(des.cols%8) return std::bind(&DistanceFactory::l2avx,std::placeholders::_1,std::placeholders::_2,des.cols);
+#endif
+#if defined(__SSE2__)
+               if(des.cols%4) return std::bind(&DistanceFactory::l2sse,std::placeholders::_1,std::placeholders::_2,des.cols);
+#endif
+               return std::bind(&DistanceFactory::l2generic,std::placeholders::_1,std::placeholders::_2,des.cols);
+          }
+          else return nullptr;
+      }
+
   };
 public:
     /// Branching factor
@@ -486,9 +565,13 @@ public:
     std::vector<Node> m_nodes;
     TinyMat           m_nodeDescriptors;
 
+private:
+    SPtr<ThreadPool>  m_workthreads;
+    DistanceFactory::DistanceFunc   m_distanceFunc;
+
     /// Words of the vocabulary (tree leaves)
     /// this condition holds: m_words[wid]->word_id == wid
-    std::vector<Node*> m_words;
+//    std::vector<Node*> m_words;
 };
 /// Base class of scoring functions
 class GeneralScoring
@@ -862,7 +945,7 @@ inline double DotProductScoring::score(const BowVector &v1,
 
 inline Vocabulary::Vocabulary
   (int k, int L, WeightingType weighting, ScoringType scoring)
-  : m_k(k), m_L(L), m_weighting(weighting), m_scoring(scoring)
+  : m_k(k), m_L(L), m_weighting(weighting), m_scoring(scoring),m_distanceFunc(nullptr)
 {
   createScoringObject();
 }
@@ -871,7 +954,7 @@ inline Vocabulary::Vocabulary
 
 
 inline Vocabulary::Vocabulary
-  (const std::string &filename): m_scoring_object(NULL)
+  (const std::string &filename): m_scoring_object(NULL),m_distanceFunc(nullptr)
 {
   load(filename);
 }
@@ -932,55 +1015,72 @@ inline void Vocabulary::setWeightingType(WeightingType type)
 inline SPtr<Vocabulary> Vocabulary::create(const std::vector<TinyMat> &imgFeatures,
                         int k , int L,WeightingType weighting , ScoringType scoring)
 {
+    timer.enter("Prepare");
+
     SPtr<Vocabulary> voc(new Vocabulary(k,L,weighting,scoring));
 
     // expected_nodes = Sum_{i=0..L} ( k^i )
     int expected_nodes =(int)((pow((double)voc->m_k, (double)voc->m_L + 1) - 1)/(voc->m_k - 1));
+    TinyMat firstF=imgFeatures.front();
+    voc->m_nodes.resize(expected_nodes);
+    voc->m_nodeDescriptors=TinyMat(expected_nodes,firstF.cols,firstF.type(),nullptr,false,32);
+    int featBytes=firstF.elemSize()*firstF.cols;
 
-    voc->m_nodes.reserve(expected_nodes);
-
-    // create root
-    voc->m_nodes.push_back(Node(0)); // root
+    if(!voc->m_distanceFunc) voc->m_distanceFunc=DistanceFactory::create(firstF);
 
     // create the tree
     int featureNum=0;
-    for(const TinyMat& m:imgFeatures) featureNum+=m.rows;
-    std::vector<TinyMat> vtf;vtf.reserve(featureNum);
+    for(const TinyMat& m:imgFeatures)
+        featureNum+=m.rows;
+    TinyMat featureHolder(featureNum,firstF.cols,firstF.type(),nullptr,false,32);
+    LOG_IF(INFO,(((int64_t)featureHolder.data)&0x1F)!=0)
+            <<"FeatureHolder adress "<<((int64_t)featureHolder.data)
+           <<" are not ready to perform AVX acceleration.\n";
+    std::vector<TinyMat> vtf;
+    vtf.reserve(featureNum);
     for(const TinyMat& m:imgFeatures){
-        for(int i=0;i<m.rows;i++)
-            vtf.push_back(m.row(i));
+        auto curSize=vtf.size();
+        memcpy(featureHolder.data+featBytes*curSize,m.data,featBytes*m.rows);
+        for(int iend=curSize+m.rows;curSize<iend;curSize++)
+            vtf.push_back(featureHolder.row(curSize));
     }
+    timer.leave("Prepare");
+
+    timer.enter("Kmeans");
+    voc->m_workthreads=SPtr<ThreadPool>(new ThreadPool(k));
     voc->HKmeansStep(0, vtf, 1);
+    timer.leave("Kmeans");
 
-    // create the words
+//    // create the words
 
-    voc->m_words.resize(0);
+//    voc->m_words.resize(0);
 
-    if(!voc->m_nodes.empty())
-    {
-      voc->m_words.reserve( (int)pow((double)voc->m_k, (double)voc->m_L) );
+//    if(!voc->m_nodes.empty())
+//    {
+//      voc->m_words.reserve( (int)pow((double)voc->m_k, (double)voc->m_L) );
 
 
-      auto  nit = voc->m_nodes.begin(); // ignore root
-      for(++nit; nit != voc->m_nodes.end(); ++nit)
-      {
-        if(nit->isLeaf())
-        {
-          nit->word_id = voc->m_words.size();
-          voc->m_words.push_back( &(*nit) );
-        }
-      }
-    }
+//      auto  nit = voc->m_nodes.begin(); // ignore root
+//      for(++nit; nit != voc->m_nodes.end(); ++nit)
+//      {
+//        if(nit->isLeaf())
+//        {
+//          nit->word_id = voc->m_words.size();
+//          voc->m_words.push_back( &(*nit) );
+//        }
+//      }
+//    }
 
+    timer.enter("weight");
     // and set the weight of each node of the tree
-    const unsigned int NWords = voc->m_words.size();
+    const unsigned int NWords = voc->m_nodes.size();
     const unsigned int NDocs = imgFeatures.size();
 
     if(voc->m_weighting == TF || voc->m_weighting == BINARY)
     {
       // idf part must be 1 always
       for(unsigned int i = 0; i < NWords; i++)
-        voc->m_words[i]->weight = 1;
+        voc->m_nodes[i].weight = 1;
     }
     else if(voc->m_weighting == IDF || voc->m_weighting == TF_IDF)
     {
@@ -1015,12 +1115,13 @@ inline SPtr<Vocabulary> Vocabulary::create(const std::vector<TinyMat> &imgFeatur
       {
         if(Ni[i] > 0)
         {
-          voc->m_words[i]->weight = log((double)NDocs / (double)Ni[i]);
+          voc->m_nodes[i].weight = log((double)NDocs / (double)Ni[i]);
         }// else // This cannot occur if using kmeans++
       }
     }
 
-    voc->unifyDescriptors();
+    timer.leave("weight");
+//    voc->unifyDescriptors();
     return voc;
 
 }
@@ -1032,6 +1133,7 @@ inline void Vocabulary::HKmeansStep(NodeId parent_id,
 
     if(descriptors.empty()) return;
 
+    if(current_level==1) timer.enter("KMeans1");
     // features associated to each cluster
     std::vector<TinyMat> clusters;
     std::vector<std::vector<unsigned int> > groups; // groups[i] = [j1, j2, ...]
@@ -1230,25 +1332,27 @@ inline void Vocabulary::HKmeansStep(NodeId parent_id,
 
     } // if must run kmeans
 
+    if(current_level==1) timer.leave("KMeans1");
+
     // create nodes
-    Node nd;
+    Node& parent=m_nodes[parent_id];
+    parent.childNum=clusters.size();
+    int des_bytes=m_nodeDescriptors.cols*m_nodeDescriptors.elemSize();
+    int childID=parent_id*m_k+1;
+    uchar* des_data=m_nodeDescriptors.data+des_bytes*(childID);
     for(unsigned int i = 0; i < clusters.size(); ++i)
     {
-        NodeId id = m_nodes.size();
-        nd.id=id;
-        nd.descriptor=clusters[i];
-        nd.parent=parent_id;
-        m_nodes.push_back(nd);
-        m_nodes[parent_id].addChild(id);
+        memcpy(des_data,clusters[i].data,des_bytes);
     }
 
+    std::vector<std::future<void> > futures;
     // go on with the next level
     if(current_level < m_L)
     {
         // iterate again with the resulting clusters
-        for(unsigned int i = 0; i < m_nodes[parent_id].childNum; ++i)
+        for(unsigned int i = 0; i < parent.childNum; ++i)
         {
-            NodeId id = m_nodes[parent_id].child[i];
+            NodeId id = childID+i;
 
             std::vector<TinyMat> child_features;
             child_features.reserve(groups[i].size());
@@ -1261,10 +1365,17 @@ inline void Vocabulary::HKmeansStep(NodeId parent_id,
 
             if(child_features.size() > 1)
             {
-                HKmeansStep(id, child_features, current_level + 1);
+                if(m_workthreads&&current_level==1)
+                    futures.push_back(m_workthreads->Add([this,id,child_features,current_level](){
+                        return HKmeansStep(id, child_features, current_level + 1);
+                    }));
+                else
+                    HKmeansStep(id, child_features, current_level + 1);
             }
         }
     }
+    for(auto& f:futures) f.wait();
+
 }
 
 
@@ -1272,15 +1383,16 @@ inline void Vocabulary::HKmeansStep(NodeId parent_id,
 
 inline float Vocabulary::getEffectiveLevels() const
 {
-  long sum = 0;
-   for(auto wit = m_words.begin(); wit != m_words.end(); ++wit)
-  {
-    const Node *p = *wit;
+    return 0;
+//  long sum = 0;
+//   for(auto wit = m_words.begin(); wit != m_words.end(); ++wit)
+//  {
+//    const Node *p = *wit;
 
-    for(; p->id != 0; sum++) p = &m_nodes[p->parent];
-  }
+//    for(; p->id != 0; sum++) p = &m_nodes[p->parent];
+//  }
 
-  return (float)((double)sum / (double)m_words.size());
+//  return (float)((double)sum / (double)m_words.size());
 }
 
 // --------------------------------------------------------------------------
@@ -1288,7 +1400,7 @@ inline float Vocabulary::getEffectiveLevels() const
 
 inline TinyMat Vocabulary::getWord(WordId wid) const
 {
-  return m_words[wid]->descriptor;
+  return m_nodeDescriptors.row(wid);
 }
 
 // --------------------------------------------------------------------------
@@ -1296,7 +1408,7 @@ inline TinyMat Vocabulary::getWord(WordId wid) const
 
 inline WordValue Vocabulary::getWordWeight(WordId wid) const
 {
-  return m_words[wid]->weight;
+  return m_nodes[wid].weight;
 }
 
 // --------------------------------------------------------------------------
@@ -1588,24 +1700,26 @@ inline void Vocabulary::transform(const TinyMat &feature,
 
   NodeId final_id = 0; // root
   int current_level = 0;
+  int featureBytes=m_nodeDescriptors.cols*m_nodeDescriptors.elemSize();
 
   do
   {
     ++current_level;
     float best_d = std::numeric_limits<float>::max();
+    NodeId best_id= final_id;
 
     const Node& node=m_nodes[final_id];
-
-    for(int i=0;i<node.childNum;i++)
+    NodeId id=final_id*m_k+1;
+    for(NodeId idEnd=id+node.childNum;id<idEnd;++id)
     {
-      auto id=node.child[i];
-      float d = distance(feature, m_nodes[id].descriptor);
+      float d = m_distanceFunc(feature.data, m_nodeDescriptors.data+featureBytes*id);
       if(d < best_d)
       {
         best_d = d;
-        final_id = id;
+        best_id = id;
       }
     }
+    final_id=best_id;
 
     if(nid != NULL && current_level == nid_level)
       *nid = final_id;
@@ -1613,7 +1727,7 @@ inline void Vocabulary::transform(const TinyMat &feature,
   } while( !m_nodes[final_id].isLeaf() );
 
   // turn node id into word id
-  word_id = m_nodes[final_id].word_id;
+  word_id = final_id;
   weight = m_nodes[final_id].weight;
 }
 
@@ -1628,24 +1742,26 @@ inline void Vocabulary::transform(const TinyMat &feature,
     do
     {
         const Node& node = m_nodes[final_id];
-        uint64_t best_d = std::numeric_limits<uint64_t>::max();
-        int idx=0,bestidx=0;
+        float best_d = std::numeric_limits<float>::max();
+        NodeId   bestID=final_id;
+        int idx=0;
         for(int i=0;i<node.childNum;i++)
         {
-            const auto& id=node.child[i];
-            uint64_t dist= distance(feature, m_nodes[id].descriptor);
+            NodeId id=final_id*m_k+1+i;
+            uint64_t dist= distance(feature, m_nodeDescriptors.row(id));
             if(dist < best_d)
             {
                 best_d = dist;
-                final_id = id;
-                bestidx=idx;
+                bestID = id;
             }
             idx++;
         }
+        final_id=bestID;
+
     } while( !m_nodes[final_id].isLeaf() );
 
     // turn node id into word id
-    word_id = m_nodes[final_id].word_id;
+    word_id = final_id;//m_nodes[final_id].word_id;
     weight = m_nodes[final_id].weight;
 }
 // --------------------------------------------------------------------------
@@ -1653,11 +1769,11 @@ inline void Vocabulary::transform(const TinyMat &feature,
 inline NodeId Vocabulary::getParentNode
   (WordId wid, int levelsup) const
 {
-  NodeId ret = m_words[wid]->id; // node id
+  NodeId ret = wid;//m_words[wid]->id; // node id
   while(levelsup > 0 && ret != 0) // ret == 0 --> root
   {
     --levelsup;
-    ret = m_nodes[ret].parent;
+    ret = (ret-1)/m_k;
   }
   return ret;
 }
@@ -1672,7 +1788,7 @@ inline void Vocabulary::getWordsFromNode
 
   if(m_nodes[nid].isLeaf())
   {
-    words.push_back(m_nodes[nid].word_id);
+    words.push_back(nid);
   }
   else
   {
@@ -1688,11 +1804,10 @@ inline void Vocabulary::getWordsFromNode
 
       for(int i=0;i<m_nodes[parentid].childNum;i++)
       {
-        const auto id=m_nodes[parentid].child[i];
-        const Node &child_node = m_nodes[id];
+        const auto id=parentid*m_k+1+i;
 
-        if(child_node.isLeaf())
-          words.push_back(child_node.word_id);
+        if(m_nodes[id].isLeaf())
+          words.push_back(id);
         else
           parents.push_back(id);
 
@@ -1707,12 +1822,12 @@ inline void Vocabulary::getWordsFromNode
 inline int Vocabulary::stopWords(double minWeight)
 {
   int c = 0;
-   for(auto wit = m_words.begin(); wit != m_words.end(); ++wit)
+   for(auto wit = m_nodes.begin(); wit != m_nodes.end(); ++wit)
   {
-    if((*wit)->weight < minWeight)
+    if((*wit).weight < minWeight)
     {
       ++c;
-      (*wit)->weight = 0;
+      (*wit).weight = 0;
     }
   }
   return c;
@@ -1750,26 +1865,10 @@ inline bool Vocabulary::save(const std::string &filename,  bool compressed) cons
     aux_stream.write((char*)&cols,sizeof(cols));
     aux_stream.write((char*)&rows,sizeof(rows));
     aux_stream.write((char*)&type,sizeof(type));
-    TinyMat globalM(rows,cols,type);
-    int desbytes=globalM.elemSize()*globalM.cols;
-    //nodes
-    for(int i=1;i<m_nodes.size();i++)
-    {
-        const Node& child = m_nodes[i];
-        aux_stream.write((char*)&child.parent,sizeof(child.parent));
-        aux_stream.write((char*)&child.weight,sizeof(child.weight));
-        const TinyMat& m=child.descriptor;
-        assert(m.type()==globalM.type()&&m.cols==globalM.cols);
-        aux_stream.write((char*)m.data,desbytes);
-    }
-    //words
-    uint32_t m_words_size=m_words.size();
-    aux_stream.write((char*)&m_words_size,sizeof(m_words_size));
-    for(Node* nit:m_words)
-    {
-        aux_stream.write((char*)&nit->id,sizeof(nit->id));
-    }
 
+    aux_stream.write((char*)m_nodes.data(),sizeof(Node)*m_nodes.size());
+    aux_stream.write((char*)m_nodeDescriptors.data,
+                     m_nodeDescriptors.elemSize()*m_nodeDescriptors.total());
 
     //now, decide if compress or not
     if (compressed){
@@ -1815,31 +1914,13 @@ inline bool Vocabulary::load(std::istream& ifile)
         _used_str->read((char*)&rows,sizeof(rows));
         _used_str->read((char*)&type,sizeof(type));
         m_nodes.resize(nnodes);
-        m_nodeDescriptors=TinyMat(m_nodes.size(),cols,type);
+        m_nodeDescriptors=TinyMat(nnodes,cols,type,nullptr,false,32);
+        m_distanceFunc=DistanceFactory::create(m_nodeDescriptors);
 
-        for(size_t i = 1; i < m_nodes.size(); ++i)
-        {
-            Node& node = m_nodes[i];
-            node.id=i;
-            _used_str->read((char*)&node.parent,sizeof(node.parent));
-            _used_str->read((char*)&node.weight,sizeof(node.weight));
-            m_nodes[node.parent].addChild(node.id);
+        _used_str->read((char*)m_nodes.data(),nnodes*sizeof(Node));
+        _used_str->read((char*)m_nodeDescriptors.data,
+                        m_nodeDescriptors.total()*m_nodeDescriptors.elemSize());
 
-            TinyMat m=m_nodeDescriptors.row(i);
-            _used_str->read((char*)m.ptr<char>(0),m.elemSize()*m.cols);
-            node.descriptor=m;
-         }
-         //  words
-        uint32_t m_words_size;
-        _used_str->read((char*)&m_words_size,sizeof(m_words_size));
-        m_words.resize(m_words_size);
-        for(unsigned int i = 0; i < m_words.size(); ++i)
-        {
-            NodeId nid;
-            _used_str->read((char*)&nid,sizeof(nid));
-            m_words[i] = &m_nodes[nid];
-            m_nodes[nid].word_id=i;
-        }
         return true;
     }
     std::cerr<<"Vocabulary: Wrong signature.";
@@ -1860,73 +1941,7 @@ inline bool Vocabulary::load(const std::string &filename)
     }
 
     // other formats
-    if(filename.find(".txt")!=std::string::npos)
-    {
-        std::ifstream ifile(filename);
-        if(!ifile)throw std::runtime_error("Vocabulary:: load_fromtxt  Could not open file for reading:"+filename);
-        int n1, n2;
-        {
-            std::string str;
-            getline(ifile,str);
-            std::stringstream ss(str);
-            ss>>m_k>>m_L>>n1>>n2;
-        }
-        if(m_k<0 || m_k>20 || m_L<1 || m_L>10 || n1<0 || n1>5 || n2<0 || n2>3)
-            throw std::runtime_error( "Vocabulary loading failure: This is not a correct text file!" );
-
-        m_scoring = (ScoringType)n1;
-        m_weighting = (WeightingType)n2;
-        createScoringObject();
-        // nodes
-        int expected_nodes =
-                (int)((pow((double)m_k, (double)m_L + 1) - 1)/(m_k - 1));
-        m_nodes.reserve(expected_nodes);
-
-        m_words.reserve(pow((double)m_k, (double)m_L + 1));
-
-        m_nodes.resize(1);
-        m_nodes[0].id = 0;
-
-        while(!ifile.eof()){
-            std::string snode;
-            getline(ifile,snode);
-            if (snode.size()==0) break;
-            std::stringstream ssnode(snode);
-
-            int nid = m_nodes.size();
-            m_nodes.resize(m_nodes.size()+1);
-            m_nodes[nid].id = nid;
-
-            int pid ;
-            ssnode >> pid;
-            m_nodes[nid].parent = pid;
-            m_nodes[pid].addChild(nid);
-
-            int nIsLeaf;
-            ssnode >> nIsLeaf;
-
-            //read until the end and add to data
-            std::vector<float> data;data.reserve(100);
-            float d;
-            while( ssnode>>d) data.push_back(d);
-            //the weight is the last
-            m_nodes[nid].weight=data.back();
-            data.pop_back();//remove
-            //the rest, to the descriptor
-            m_nodes[nid].descriptor=TinyMat(1,data.size(),GImageType<uchar>::Type);
-            auto ptr=m_nodes[nid].descriptor.data;
-            for(auto d:data) *ptr++=d;
-
-            if(nIsLeaf>0)
-            {
-                m_nodes[nid].word_id = m_words.size();
-                m_words.push_back(&m_nodes[nid]);
-            }
-        }
-        unifyDescriptors();
-        return true;
-    }
-    else if(filename.find(".yml")!=std::string::npos)
+    if(filename.find(".yml")!=std::string::npos)
     {
         throw std::runtime_error( "Vocabulary loading failure: .yml loading is not implemented!" );
     }
@@ -1983,7 +1998,6 @@ inline void Vocabulary::clear(){
     m_scoring_object.reset();
     m_scoring_object=0;
     m_nodes.clear();
-    m_words.clear();
     m_nodeDescriptors=TinyMat();
 }
 
@@ -2052,67 +2066,9 @@ inline void Vocabulary::meanValue(const std::vector<TinyMat> &descriptors,
     }
 }
 
-inline float Vocabulary::distance(const TinyMat &a,  const TinyMat &b)
+inline float Vocabulary::distance(const TinyMat &a,  const TinyMat &b)const
 {
-    //binary descriptor
-    if (a.type()==GImageType<uchar>::Type){
-         const uint64_t *pa, *pb;
-         pa = (uint64_t*)a.data; // a & b are actually CV_8U
-         pb = (uint64_t*)b.data;
-
-         uint64_t ret = 0;
-         for(size_t i = 0; i < a.cols / sizeof(uint64_t); ++i, ++pa, ++pb)
-         {
-             ret+=std::bitset<64>(*pa ^ *pb).count();
-         }
-         return ret;
-    }
-#if defined(__AVX2__)
-    else if(a.cols%8==0&&((int64_t)a.data&0x1F)==0&&((int64_t)b.data&0x1F)==0)
-    {
-        int _nwords=a.cols/8;
-        __m256 sum=_mm256_setzero_ps(), sub_mult;
-        __m256* aptr=(__m256*)a.data;
-        __m256* bptr=(__m256*)b.data;
-       for(int i=0;i<_nwords;i++){
-           sub_mult=_mm256_sub_ps(aptr[i],bptr[i]);
-           sub_mult=_mm256_mul_ps(sub_mult,sub_mult);
-           sum=_mm256_add_ps(sum,sub_mult);
-       }
-       sum=_mm256_hadd_ps(sum,sum);
-       sum=_mm256_hadd_ps(sum,sum);
-       float *sum_ptr=(float*)&sum;
-       return  sum_ptr[0]+sum_ptr[4];
-    }
-#endif
-#if defined(__SSE2__)&&defined(__SSE__)
-    else if(a.cols%4==0)
-    {
-        int _nwords=a.cols/4;
-        __m128 sum=_mm_setzero_ps(), sub_mult;
-        float* sum_ptr=(float*)&sum;
-       //substract, multiply and accumulate
-       __m128* aptr=(__m128*)a.data;
-       __m128* bptr=(__m128*)b.data;
-       for(int i=0;i<_nwords;i++){
-           sub_mult=_mm_sub_ps(aptr[i],bptr[i]);
-           sub_mult=_mm_mul_ps(sub_mult,sub_mult);
-           sum=_mm_add_ps(sum,sub_mult);
-       }
-       return sum_ptr[0]+sum_ptr[1]+sum_ptr[2]+sum_ptr[3] ;
-    }
-#endif
-    else{
-        float sqd = 0.,tmp;
-        const float *a_ptr=(float*)a.data;
-        const float *b_ptr=(float*)b.data;
-        for(int i = 0; i < a.cols; i ++)
-        {
-            tmp = (a_ptr[i  ] - b_ptr[i  ]);
-            sqd += tmp*tmp;
-        }
-        return sqd;
-    }
+    return m_distanceFunc(a.data,b.data);
 }
 
 }

@@ -152,7 +152,7 @@ void GPUSIFT::operator()(const GSLAM::GImage& image, const GSLAM::GImage& mask,
 
     vector<SiftGPU::SiftKeypoint> kps(nFea);
     keypoints.resize(nFea);
-    descriptors=GSLAM::GImage(nFea,128,GSLAM::GImageType<float>::Type);
+    descriptors=GSLAM::GImage(nFea,128,GSLAM::GImageType<float>::Type,nullptr,false,32);
 
 
     sift->GetFeatureVector(&kps[0], descriptors.ptr<float>(0));

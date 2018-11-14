@@ -1,5 +1,8 @@
-#include <GSLAM/core/SharedLibrary.h>
 #include <unordered_map>
+
+#ifdef __linux
+#include <unistd.h>
+#endif
 
 namespace GSLAM{
 
@@ -17,7 +20,12 @@ public:
 
     void enable(){_enabled=true;}
 
-    size_t usage()const{return _usage;}
+    size_t usage()const{
+        if(_enabled)
+            return _usage;
+        else return processUsage();
+    }
+
     size_t count()const{return _allocated_sizes.size();}
 
     void AddAllocation(void* ptr,size_t size){
@@ -50,6 +58,34 @@ public:
     }
 
     operator bool(){return isEnabled();}
+
+    static size_t processUsage(){
+#ifdef __linux
+        char file_name[64]={0};
+        FILE *fd;
+        char line_buff[512]={0};
+        sprintf(file_name,"/proc/%d/status",getpid());
+
+        fd =fopen(file_name,"r");
+        if(nullptr == fd){
+            return 0;
+        }
+
+        char name[64];
+        int vmrss;
+        const int VMRSS_LINE=17;
+        for (int i=0; i<VMRSS_LINE-1;i++){
+            fgets(line_buff,sizeof(line_buff),fd);
+        }
+
+        fgets(line_buff,sizeof(line_buff),fd);
+        sscanf(line_buff,"%s %d",name,&vmrss);
+        fclose(fd);
+        return vmrss;
+#else
+        return 0;
+#endif
+    }
 
 private:
     std::unordered_map<void*,size_t>  _allocated_sizes;
