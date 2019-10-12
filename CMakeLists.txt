@@ -48,5 +48,5 @@ if(USE_O2)
      add_definitions(-DUSE_AVX)
     endif()
 
-pi_add_target(gslam_bowbench SHARED DBow3/src DBoW2/src fbow/src src REQUIRED GSLAM GLEW GLUT OpenGL OpenCV System DEPENDENCY X11)
+pi_add_target(gslam_bowbench BIN DBow3/src DBoW2/src fbow/src src REQUIRED GSLAM GLEW GLUT OpenGL OpenCV System DEPENDENCY X11)
 pi_report_target()

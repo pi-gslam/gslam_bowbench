@@ -303,8 +303,10 @@ void testFBoW(const std::vector<cv::Mat>& features)
 
 }
 
-int  runbowbench(GSLAM::Svar config){
-    svar=config;
+int  main(int argc,char** argv){
+    GSLAM::Svar config=svar;
+    config.parseMain(argc,argv);
+
     svar.arg<int>("k",10,"How many branches each node grow.");
     svar.arg<int>("level",3,"How many levels should the vocabulary contains.");
     svar.arg<int>("weight",3,"How many levels should the vocabulary contains.");
@@ -363,6 +365,3 @@ int  runbowbench(GSLAM::Svar config){
 
     return 0;
 }
-
-
-GSLAM_REGISTER_APPLICATION(bowbench,runbowbench);

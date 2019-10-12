@@ -30,13 +30,13 @@ for img in $(ls ../DBow3/utils/images/*);do echo $img;done > images.txt
 Show usage with:
 
 ```
-gslam bowbench --help 
+gslam_bowbench --help 
 ```
 
 Run with:
 
 ```
-gslam bowbench -images images.txt -k=10 -level=3 -mem -feature=ORB
+gslam_bowbench -images images.txt -k=10 -level=3 -mem -feature=ORB
 ```
 
 ## 4. Sample result
