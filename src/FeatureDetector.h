@@ -1,8 +1,5 @@
 #pragma once
-#include <GSLAM/core/KeyPoint.h>
-#include <GSLAM/core/GImage.h>
-#include <GSLAM/core/SPtr.h>
-#include <GSLAM/core/Svar.h>
+#include <GSLAM/core/GSLAM.h>
 
 class FeatureDetector
 {
@@ -15,15 +12,15 @@ public:
     virtual int descriptorSize()const{return 0;}
     virtual int descriptorType()const{return GSLAM::GImageType<>::Type;}
 
-    static SPtr<FeatureDetector> create(std::string desireType);
+    static std::shared_ptr<FeatureDetector> create(std::string desireType);
+    static GSLAM::Svar holder(){static GSLAM::Svar var=GSLAM::Svar::object();return var;}
 };
 
-typedef SPtr<FeatureDetector> FeatureDetectorPtr;
+typedef std::shared_ptr<FeatureDetector> FeatureDetectorPtr;
 typedef FeatureDetectorPtr (*funcCreateFeatureDetector)();
 
 inline FeatureDetectorPtr FeatureDetector::create(std::string desireType){
-    auto& inst=GSLAM::SvarWithType<funcCreateFeatureDetector>::instance();
-    funcCreateFeatureDetector createFunc=inst.get_var(desireType,NULL);
+    funcCreateFeatureDetector createFunc=::FeatureDetector::holder().get<funcCreateFeatureDetector>(desireType,NULL);
     if(!createFunc) return FeatureDetectorPtr();
     return createFunc();
 }
@@ -32,7 +29,7 @@ inline FeatureDetectorPtr FeatureDetector::create(std::string desireType){
     extern "C" FeatureDetectorPtr create##E(){ return FeatureDetectorPtr(new D());}\
     class D##E##_Register{ \
     public: D##E##_Register(){\
-    GSLAM::SvarWithType<funcCreateFeatureDetector>::instance().insert(#E,create##E);\
+    ::FeatureDetector::holder().set(#E,(funcCreateFeatureDetector)create##E);\
 }}D##E##_instance;
 
 

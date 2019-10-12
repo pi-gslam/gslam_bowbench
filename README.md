@@ -1,4 +1,4 @@
-# GSLAM Vocabulary
+# GSLAM Vocabulary Benchmark
 
 This project performs comparison between DBoW2, DBoW3, FBoW and Vocabulary of GSLAM.
 The load, save, transform and memory usage of them are compared.
@@ -7,13 +7,13 @@ The load, save, transform and memory usage of them are compared.
 ## 1. Download the source code
 
 ```
-git clone --recursive https://github.com/zdzhaoyong/GSLAMVocabulary
+git clone --recursive https://github.com/pi-lab/gslam_bowbench
 ``` 
 
 ## 2. Compile
 
 ```
-cd GSLAMVocabulary
+cd gslam_bowbench
 mkdir build
 cd build
 cmake ..
@@ -30,13 +30,13 @@ for img in $(ls ../DBow3/utils/images/*);do echo $img;done > images.txt
 Show usage with:
 
 ```
-./compare --help 
+gslam bowbench --help 
 ```
 
 Run with:
 
 ```
-./compare -images images.txt -k=10 -level=3 -mem -feature=ORB
+gslam bowbench -images images.txt -k=10 -level=3 -mem -feature=ORB
 ```
 
 ## 4. Sample result

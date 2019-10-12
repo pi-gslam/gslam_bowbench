@@ -1,7 +1,5 @@
-#include <GSLAM/core/Svar.h>
-#include <GSLAM/core/Timer.h>
-#include <GSLAM/core/Glog.h>
-#include <GSLAM/core/MemoryMetric.inc> // This file should always only included by the main.cpp
+#include <GSLAM/core/GSLAM.h>
+#include "MemoryMetric.inc"
 
 #include "../DBoW2/DBoW2.h"
 #include "DBoW2/FSift.h"
@@ -13,7 +11,6 @@
 #undef __D_T_QUERY_RESULTS__
 #include "../DBow3/src/DBoW3.h"
 #include "../fbow/src/vocabulary_creator.h"
-#include <GSLAM/core/Vocabulary.h>
 
 #include <opencv2/highgui/highgui.hpp>
 #include "FeatureDetector.h"
@@ -27,7 +24,7 @@ void testGSLAM(const std::vector<cv::Mat>& featuresCV)
     for(auto it:featuresCV) features.push_back(it);
 
     LOG(INFO)<<"GSLAM: Creating vocabulary from image features.\n";
-    SPtr<GSLAM::Vocabulary> vocabulary;
+    std::shared_ptr<GSLAM::Vocabulary> vocabulary;
 
     {
         GSLAM::ScopedTimer tm("GSLAM::train");
@@ -128,7 +125,7 @@ void testDBoW2ORB(const std::vector<cv::Mat>& features)
         auto before=GSLAM::MemoryMetric::instanceCPU().usage();
         auto count =GSLAM::MemoryMetric::instanceCPU().count();
         {
-            SPtr<OrbVocabulary> voc(new OrbVocabulary(svar.GetInt("k"),svar.GetInt("level")));
+            std::shared_ptr<OrbVocabulary> voc(new OrbVocabulary(svar.GetInt("k"),svar.GetInt("level")));
             voc->load("vocabulary.yaml");
             LOG_IF(INFO,mem)<<"DBoW2 used memory "<<GSLAM::MemoryMetric::instanceCPU().usage()-before
                     <<" bytes with "<<GSLAM::MemoryMetric::instanceCPU().count()-count<<" pieces.";
@@ -182,7 +179,7 @@ void testDBoW2Sift(const std::vector<cv::Mat>& features)
         auto before=GSLAM::MemoryMetric::instanceCPU().usage();
         auto count =GSLAM::MemoryMetric::instanceCPU().count();
         {
-            SPtr<SiftVocabulary> voc(new SiftVocabulary(svar.GetInt("k"),svar.GetInt("level")));
+            std::shared_ptr<SiftVocabulary> voc(new SiftVocabulary(svar.GetInt("k"),svar.GetInt("level")));
             voc->load("vocabulary.yaml");
             LOG_IF(INFO,mem)<<"DBoW2 used memory "<<GSLAM::MemoryMetric::instanceCPU().usage()-before
                     <<" bytes with "<<GSLAM::MemoryMetric::instanceCPU().count()-count<<" pieces.";
@@ -240,7 +237,7 @@ void testDBoW3(const std::vector<cv::Mat>& features)
         auto before=GSLAM::MemoryMetric::instanceCPU().usage();
         auto count =GSLAM::MemoryMetric::instanceCPU().count();
         {
-            SPtr<DBoW3::Vocabulary> voc(new DBoW3::Vocabulary(svar.GetInt("k"),svar.GetInt("level")));
+            std::shared_ptr<DBoW3::Vocabulary> voc(new DBoW3::Vocabulary(svar.GetInt("k"),svar.GetInt("level")));
             voc->load("vocabulary.dbow");
             LOG_IF(INFO,mem)<<"DBoW3 used memory "<<GSLAM::MemoryMetric::instanceCPU().usage()-before
                     <<" bytes with "<<GSLAM::MemoryMetric::instanceCPU().count()-count<<" pieces.";
@@ -295,7 +292,7 @@ void testFBoW(const std::vector<cv::Mat>& features)
         auto before=GSLAM::MemoryMetric::instanceCPU().usage();
         auto count =GSLAM::MemoryMetric::instanceCPU().count();
         {
-            SPtr<fbow::Vocabulary> voc(new fbow::Vocabulary());
+            std::shared_ptr<fbow::Vocabulary> voc(new fbow::Vocabulary());
             voc->readFromFile("vocabulary.fbow");
             LOG_IF(INFO,mem)<<"FBoW used memory "<<GSLAM::MemoryMetric::instanceCPU().usage()-before
                     <<" bytes with "<<GSLAM::MemoryMetric::instanceCPU().count()-count<<" pieces.";
@@ -306,23 +303,21 @@ void testFBoW(const std::vector<cv::Mat>& features)
 
 }
 
-int  main(int argc,char** argv){
-    svar.Arg<int>("k",10,"How many branches each node grow.");
-    svar.Arg<int>("level",3,"How many levels should the vocabulary contains.");
-    svar.Arg<int>("weight",3,"How many levels should the vocabulary contains.");
-    svar.Arg<int>("score",3,"How many levels should the vocabulary contains.");
-    svar.Arg<int>("threads",1,"How many threads use to train a model.");
-    svar.Arg<std::string>("images","","The file path listed image paths.");
-    svar.Arg<bool>("mem",true,"Should report memory usage or not.");
-    svar.Arg<std::string>("feature","ORB","Feature name to test, support ORB or Sift.");
-
-    auto unparsed=svar.ParseMain(argc,argv);
+int  runbowbench(GSLAM::Svar config){
+    svar=config;
+    svar.arg<int>("k",10,"How many branches each node grow.");
+    svar.arg<int>("level",3,"How many levels should the vocabulary contains.");
+    svar.arg<int>("weight",3,"How many levels should the vocabulary contains.");
+    svar.arg<int>("score",3,"How many levels should the vocabulary contains.");
+    svar.arg<int>("threads",1,"How many threads use to train a model.");
+    svar.arg<std::string>("images","","The file path listed image paths.");
+    svar.arg<bool>("mem",true,"Should report memory usage or not.");
+    svar.arg<std::string>("feature","ORB","Feature name to test, support ORB or Sift.");
 
     std::string& image_lists=svar.GetString("images");
-    if(unparsed.size()||svar.GetInt("help")||image_lists.empty())
+    if(image_lists.empty()||config.get("help",false))
     {
-        std::cout<<svar.help()<<std::endl;
-        return 0;
+        return config.help();
     }
 
     if(svar.Get<bool>("mem"))
@@ -368,3 +363,6 @@ int  main(int argc,char** argv){
 
     return 0;
 }
+
+
+GSLAM_REGISTER_APPLICATION(bowbench,runbowbench);

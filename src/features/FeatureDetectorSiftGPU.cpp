@@ -6,7 +6,7 @@
 
 #include <GSLAM/core/Glog.h>
 #include <GSLAM/core/Timer.h>
-#include "OpenGL.h"
+#include <GL/glew.h>
 #include "../FeatureDetector.h"
 #include "SiftGPU/SiftGPU.h"
 
@@ -36,7 +36,7 @@ public:
     virtual int descriptorType()const{return GSLAM::GImageType<float>::Type;}
 
 private:
-    mutable SPtr<SiftGPU>  sift;
+    mutable std::shared_ptr<SiftGPU>  sift;
     mutable vector<string> args;
 };
 
@@ -73,7 +73,7 @@ void GPUSIFT::init()const
     if(!args.size()) return;
 
     // create SIFT object
-    sift=SPtr<SiftGPU>(CreateNewSiftGPU(0));
+    sift=std::shared_ptr<SiftGPU>(CreateNewSiftGPU(0));
 
     if(sift->CreateContextGL() != SiftGPU::SIFTGPU_FULL_SUPPORTED)
     {
